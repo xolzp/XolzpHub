@@ -11,24 +11,33 @@ local player = Players.LocalPlayer
 
 -- Змінні стану
 local isRunning = false
-local jumpInterval = 300 -- За замовчуванням 5 хвилин (300 секунд)
-local activeLanguage = "EN" -- Встановлено "EN" за дефолтом
+local jumpInterval = 300 
+local activeLanguage = "EN" 
 local useVirtual = true
 local usePhysical = true
-local textScaleMultiplier = 1.0 -- Коефіцієнт масштабу тексту (від 0.8 до 1.5)
-local isLoaded = false -- Прапор закінчення завантаження
-local isMinimized = false -- Глобальний прапор згортання
-local setMinimized -- Форвард-декларація функції згортання
+local usePotato = false 
+local disable3DRender = false 
+local textScaleMultiplier = 1.0 
+local isLoaded = false 
+local isMinimized = false 
+local isSettingsOpen = false 
+local setMinimized, updateLayout 
+
+-- Змінні для виправлення багів
+local descendantConnection = nil
+local isInternalResizing = false
+local connections = {} 
+local originalLighting = {} 
 
 -- Часові змінні
 local lastJumpTime = 0
 local startTime = 0
 
--- Попереднє оголошення елементів інтерфейсу для уникнення багів області видимості (Scope)
-local ScreenGui, MainFrame, ContentFrame, Title, CloseBtn, MinimizeBtn
+-- Попереднє оголошення елементів
+local ScreenGui, MainFrame, ContentFrame, Title, CloseBtn, MinimizeBtn, SettingsBtn
 local LangFrame, BtnUA, BtnEN, BtnRU
 local StatusLabel, TimerLabel
-local BoxVirtual, LblVirtual, BoxPhysical, LblPhysical
+local BoxVirtual, LblVirtual, BoxPhysical, LblPhysical, BoxPotato, LblPotato, BoxRender, LblRender
 local TextSizeLabel, TextSliderFrame, TextSliderButton
 local IntervalLabel, SliderFrame, SliderButton
 local TestBtn, ToggleBtn, InfoLabel, RestoreBtn
@@ -50,6 +59,8 @@ local t = {
         btn_test = "ТЕСТОВИЙ СТРИБОК",
         cb_virtual = "Емуляція кліків (VirtualUser)",
         cb_physical = "Фізичні стрибки (Клавіатура)",
+        cb_potato = "Жорсткий Potato Mode 🥔",
+        cb_render = "Вимкнути 3D Рендер ⬛",
         notif_minimized = "Меню згорнуто! Натисніть [Ctrl + S], щоб відкрити знову.",
         load_1 = "Завантаження бази даних...",
         load_2 = "Перевірка конфігурації...",
@@ -69,6 +80,8 @@ local t = {
         btn_test = "TEST JUMP",
         cb_virtual = "Emulate Clicks (VirtualUser)",
         cb_physical = "Physical Jumps (Keyboard)",
+        cb_potato = "Hardcore Potato Mode 🥔",
+        cb_render = "Disable 3D Rendering ⬛",
         notif_minimized = "Menu minimized! Press [Ctrl + S] to open again.",
         load_1 = "Loading database...",
         load_2 = "Checking configuration...",
@@ -88,7 +101,9 @@ local t = {
         btn_test = "ТЕСТОВЫЙ ПРЫЖОК",
         cb_virtual = "Эмуляция кликов (VirtualUser)",
         cb_physical = "Физические прыжки (Клавиатура)",
-        notif_minimized = "Menu minimized! Press [Ctrl + S] to open again.",
+        cb_potato = "Жесткий Potato Mode 🥔",
+        cb_render = "Отключить 3D Рендер ⬛",
+        notif_minimized = "Меню свернуто! Нажмите [Ctrl + S], чтобы открыть снова.",
         load_1 = "Загрузка базы данных...",
         load_2 = "Проверка конфигурации...",
         load_3 = "Подготовка обхода AFK...",
@@ -96,31 +111,21 @@ local t = {
     }
 }
 
--- Базові розміри шрифтів
 local baseFontSizes = {
-    Title = 12,
-    StatusLabel = 12,
-    TimerLabel = 12,
-    Checkbox = 11,
-    SliderLabel = 11,
-    TestBtn = 11,
-    ToggleBtn = 12,
-    LangBtn = 10,
-    CloseBtn = 16,
-    MinimizeBtn = 12
+    Title = 12, StatusLabel = 12, TimerLabel = 12, Checkbox = 11,
+    SliderLabel = 11, TestBtn = 11, ToggleBtn = 12, LangBtn = 10,
+    CloseBtn = 16, MinimizeBtn = 12
 }
 
--- Налаштування лімітів ресайзу
-local minWidth, minHeight = 220, 320
-local maxWidth, maxHeight = 600, 800
+local minWidth, minHeight = 220, 345 -- ВИПРАВЛЕНО: Оновлено стартовий мінімальний розмір
+local maxWidth, maxHeight = 600, 850
 
--- Створення GUI
 ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "AntiAFK_Cosmic"
 ScreenGui.Parent = CoreGui
 ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
--- Головний Фрейм
 MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
 MainFrame.Parent = ScreenGui
@@ -148,7 +153,6 @@ ContentFrame.Parent = MainFrame
 ContentFrame.BackgroundTransparency = 1
 ContentFrame.Size = UDim2.new(1, 0, 1, 0)
 
--- Верхня панель (Заголовок)
 Title = Instance.new("TextLabel")
 Title.Name = "Title"
 Title.Parent = ContentFrame
@@ -197,13 +201,35 @@ local MinimizeCorner = Instance.new("UICorner")
 MinimizeCorner.CornerRadius = UDim.new(0, 6)
 MinimizeCorner.Parent = MinimizeBtn
 
--- Панель вибору мови
+SettingsBtn = Instance.new("TextButton")
+SettingsBtn.Name = "SettingsBtn"
+SettingsBtn.Parent = Title
+SettingsBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+SettingsBtn.BorderSizePixel = 0
+SettingsBtn.Position = UDim2.new(1, -80, 0, 8)
+SettingsBtn.Size = UDim2.new(0, 22, 0, 22)
+SettingsBtn.Font = Enum.Font.GothamBold
+SettingsBtn.Text = "⚙"
+SettingsBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+SettingsBtn.TextSize = baseFontSizes.MinimizeBtn
+
+local SettingsCorner = Instance.new("UICorner")
+SettingsCorner.CornerRadius = UDim.new(0, 6)
+SettingsCorner.Parent = SettingsBtn
+
+SettingsBtn.Activated:Connect(function()
+    if not isLoaded or isMinimized then return end
+    isSettingsOpen = not isSettingsOpen
+    updateLayout(true) -- Примусове оновлення розміру при відкритті налаштувань
+end)
+
 LangFrame = Instance.new("Frame")
 LangFrame.Name = "LangFrame"
 LangFrame.Parent = ContentFrame
 LangFrame.BackgroundTransparency = 1
 LangFrame.Position = UDim2.new(0, 15, 0, 48)
 LangFrame.Size = UDim2.new(1, -30, 0, 22)
+LangFrame.Visible = false 
 
 local function createLangBtn(name, text, posX)
     local btn = Instance.new("TextButton")
@@ -234,7 +260,6 @@ BtnUA = createLangBtn("BtnUA", "UA", 0)
 BtnEN = createLangBtn("BtnEN", "EN", 46)
 BtnRU = createLangBtn("BtnRU", "RU", 92)
 
--- Статус роботи
 StatusLabel = Instance.new("TextLabel")
 StatusLabel.Name = "StatusLabel"
 StatusLabel.Parent = ContentFrame
@@ -247,7 +272,6 @@ StatusLabel.TextColor3 = Color3.fromRGB(180, 50, 50)
 StatusLabel.TextSize = baseFontSizes.StatusLabel
 StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
 
--- Форматування часу
 local function formatTime(seconds)
     local hours = math.floor(seconds / 3600)
     local minutes = math.floor((seconds % 3600) / 60)
@@ -255,7 +279,6 @@ local function formatTime(seconds)
     return string.format("%02d:%02d:%02d", hours, minutes, secs)
 end
 
--- Форматування тексту інтервалу
 local function formatIntervalText(seconds, lang)
     if seconds < 60 then
         return string.format(t[lang].interval_sec, seconds)
@@ -270,7 +293,6 @@ local function formatIntervalText(seconds, lang)
     end
 end
 
--- Таймер
 TimerLabel = Instance.new("TextLabel")
 TimerLabel.Name = "TimerLabel"
 TimerLabel.Parent = ContentFrame
@@ -283,7 +305,6 @@ TimerLabel.TextColor3 = Color3.fromRGB(200, 200, 205)
 TimerLabel.TextSize = baseFontSizes.TimerLabel
 TimerLabel.TextXAlignment = Enum.TextXAlignment.Left
 
--- Чекбокси методів обходу
 local function createCheckbox(name, labelText, posY, defaultVal)
     local frame = Instance.new("Frame")
     frame.Name = name .. "Frame"
@@ -330,156 +351,294 @@ end
 BoxVirtual, LblVirtual = createCheckbox("Virtual", t[activeLanguage].cb_virtual, 124, useVirtual)
 BoxPhysical, LblPhysical = createCheckbox("Physical", t[activeLanguage].cb_physical, 152, usePhysical)
 
--- Послідовний движок верстки
-local function updateLayout()
+BoxPotato, LblPotato = createCheckbox("Potato", t[activeLanguage].cb_potato, 180, usePotato)
+ContentFrame:FindFirstChild("PotatoFrame").Visible = false
+
+BoxRender, LblRender = createCheckbox("Render", t[activeLanguage].cb_render, 208, disable3DRender)
+ContentFrame:FindFirstChild("RenderFrame").Visible = false
+
+local function applyPotatoMode(enable)
+    if descendantConnection then
+        descendantConnection:Disconnect()
+        descendantConnection = nil
+    end
+
+    local lighting = game:GetService("Lighting")
+    local terrain = workspace:FindFirstChildOfClass("Terrain")
+
+    if enable then
+        originalLighting.GlobalShadows = lighting.GlobalShadows
+        lighting.GlobalShadows = false
+        
+        for _, effect in ipairs(lighting:GetChildren()) do
+            if effect:IsA("PostEffect") or effect:IsA("DepthOfFieldEffect") or effect:IsA("SunRaysEffect") or effect:IsA("Atmosphere") or effect:IsA("Clouds") then
+                originalLighting[effect] = effect.Enabled
+                effect.Enabled = false
+            end
+        end
+
+        if terrain then
+            originalLighting.TerrainDecoration = terrain.Decoration
+            originalLighting.WaterWaveSize = terrain.WaterWaveSize
+            originalLighting.WaterWaveSpeed = terrain.WaterWaveSpeed
+            originalLighting.WaterDetailLevel = terrain.WaterDetailLevel
+            
+            terrain.Decoration = false
+            terrain.WaterWaveSize = 0
+            terrain.WaterWaveSpeed = 0
+            terrain.WaterDetailLevel = Enum.WaterDetailLevel.Low
+        end
+        
+        local function makePotato(inst)
+            if inst:IsA("Decal") or inst:IsA("Texture") then
+                inst:Destroy()
+            elseif inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Beam") or inst:IsA("Fire") or inst:IsA("Smoke") or inst:IsA("Sparkles") then
+                inst.Enabled = false
+            elseif inst:IsA("MeshPart") then
+                pcall(function() inst.TextureID = "" end)
+                inst.Material = Enum.Material.SmoothPlastic
+                inst.CastShadow = false
+            elseif inst:IsA("SpecialMesh") then
+                pcall(function() inst.TextureId = "" end)
+            elseif inst:IsA("BasePart") then
+                inst.Material = Enum.Material.SmoothPlastic
+                inst.CastShadow = false
+            elseif inst:IsA("Shirt") or inst:IsA("Pants") or inst:IsA("ShirtGraphic") then
+                inst:Destroy()
+            end
+        end
+        
+        for _, descendant in ipairs(workspace:GetDescendants()) do
+            pcall(makePotato, descendant)
+        end
+        descendantConnection = workspace.DescendantAdded:Connect(function(descendant)
+            if usePotato then pcall(makePotato, descendant) end
+        end)
+    else
+        if originalLighting.GlobalShadows ~= nil then
+            lighting.GlobalShadows = originalLighting.GlobalShadows
+        end
+        for effect, state in pairs(originalLighting) do
+            if typeof(effect) == "Instance" and effect.Parent then
+                effect.Enabled = state
+            end
+        end
+        
+        if terrain then
+            if originalLighting.TerrainDecoration ~= nil then terrain.Decoration = originalLighting.TerrainDecoration end
+            if originalLighting.WaterWaveSize ~= nil then terrain.WaterWaveSize = originalLighting.WaterWaveSize end
+            if originalLighting.WaterWaveSpeed ~= nil then terrain.WaterWaveSpeed = originalLighting.WaterWaveSpeed end
+            if originalLighting.WaterDetailLevel ~= nil then terrain.WaterDetailLevel = originalLighting.WaterDetailLevel end
+        end
+        
+        table.clear(originalLighting)
+    end
+end
+
+local function apply3DRender(disable)
+    pcall(function()
+        RunService:Set3dRenderingEnabled(not disable)
+    end)
+end
+
+-- ВИПРАВЛЕНО: Додано параметр forceResize, щоб уникнути примусового стягування розміру, 
+-- коли користувач вручну змінює розмір вікна.
+updateLayout = function(forceResize)
     if not isLoaded or isMinimized or not MainFrame or not MainFrame:IsDescendantOf(game) then return end
+    if isInternalResizing then return end
     
     local w = MainFrame.AbsoluteSize.X
     local h = MainFrame.AbsoluteSize.Y
-    
-    if ResizeBtn then
-        ResizeBtn.Position = UDim2.new(1, -20, 1, -20)
-    end
-    
+    if ResizeBtn then ResizeBtn.Position = UDim2.new(1, -20, 1, -20) end
     local startX = 15
     local currentY = 0
     local verticalPadding = 8 * textScaleMultiplier
-    
     local titleHeight = math.clamp(h * 0.1, 38, 50)
     Title.Size = UDim2.new(1, 0, 0, titleHeight)
     currentY = titleHeight + 10
     
-    LangFrame.Position = UDim2.new(0, startX, 0, currentY)
-    local langHeight = 22 * textScaleMultiplier
-    LangFrame.Size = UDim2.new(1, -30, 0, langHeight)
-    
-    local btnWidth = math.clamp(w * 0.16, 42, 65)
-    local btnGap = 4
-    BtnUA.Size = UDim2.new(0, btnWidth, 1, 0)
-    BtnUA.Position = UDim2.new(0, 0, 0, 0)
-    BtnEN.Size = UDim2.new(0, btnWidth, 1, 0)
-    BtnEN.Position = UDim2.new(0, btnWidth + btnGap, 0, 0)
-    BtnRU.Size = UDim2.new(0, btnWidth, 1, 0)
-    BtnRU.Position = UDim2.new(0, (btnWidth + btnGap) * 2, 0, 0)
-    
-    currentY = currentY + langHeight + verticalPadding
-    
-    StatusLabel.Position = UDim2.new(0, startX, 0, currentY)
-    local statusHeight = 20 * textScaleMultiplier
-    StatusLabel.Size = UDim2.new(1, -30, 0, statusHeight)
-    currentY = currentY + statusHeight + 2
-    
-    TimerLabel.Position = UDim2.new(0, startX, 0, currentY)
-    local timerHeight = 20 * textScaleMultiplier
-    TimerLabel.Size = UDim2.new(1, -30, 0, timerHeight)
-    currentY = currentY + timerHeight + verticalPadding
-    
-    local bypass1 = ContentFrame:FindFirstChild("VirtualFrame")
-    if bypass1 then
-        bypass1.Position = UDim2.new(0, startX, 0, currentY)
-        local bypass1Height = 22 * textScaleMultiplier
-        bypass1.Size = UDim2.new(1, -30, 0, bypass1Height)
+    if isSettingsOpen then
+        LangFrame.Visible = true
+        LangFrame.Position = UDim2.new(0, startX, 0, currentY)
+        local langHeight = 22 * textScaleMultiplier
+        LangFrame.Size = UDim2.new(1, -30, 0, langHeight)
+        local btnWidth = math.clamp(w * 0.16, 42, 65)
+        local btnGap = 4
+        BtnUA.Size = UDim2.new(0, btnWidth, 1, 0)
+        BtnUA.Position = UDim2.new(0, 0, 0, 0)
+        BtnEN.Size = UDim2.new(0, btnWidth, 1, 0)
+        BtnEN.Position = UDim2.new(0, btnWidth + btnGap, 0, 0)
+        BtnRU.Size = UDim2.new(0, btnWidth, 1, 0)
+        BtnRU.Position = UDim2.new(0, (btnWidth + btnGap) * 2, 0, 0)
+        currentY = currentY + langHeight + verticalPadding
         
-        local box = bypass1:FindFirstChild("Box")
-        local lbl = bypass1:FindFirstChild("Label")
-        if box and lbl then
-            local boxSize = math.clamp(18 * textScaleMultiplier, 14, 24)
-            box.Size = UDim2.new(0, boxSize, 0, boxSize)
-            box.Position = UDim2.new(0, 0, 0.5, -boxSize/2)
-            lbl.Position = UDim2.new(0, boxSize + 8, 0, 0)
-            lbl.Size = UDim2.new(1, -(boxSize + 8), 1, 0)
+        local potFrame = ContentFrame:FindFirstChild("PotatoFrame")
+        if potFrame then
+            potFrame.Visible = true
+            potFrame.Position = UDim2.new(0, startX, 0, currentY)
+            local frameHeight = 22 * textScaleMultiplier
+            potFrame.Size = UDim2.new(1, -30, 0, frameHeight)
+            local box = potFrame:FindFirstChild("Box")
+            local lbl = potFrame:FindFirstChild("Label")
+            if box and lbl then
+                local boxSize = math.clamp(18 * textScaleMultiplier, 14, 24)
+                box.Size = UDim2.new(0, boxSize, 0, boxSize)
+                box.Position = UDim2.new(0, 0, 0.5, -boxSize/2)
+                lbl.Position = UDim2.new(0, boxSize + 8, 0, 0)
+                lbl.Size = UDim2.new(1, -(boxSize + 8), 1, 0)
+            end
+            currentY = currentY + frameHeight + verticalPadding
         end
-        currentY = currentY + bypass1Height + verticalPadding
-    end
-    
-    local bypass2 = ContentFrame:FindFirstChild("PhysicalFrame")
-    if bypass2 then
-        bypass2.Position = UDim2.new(0, startX, 0, currentY)
-        local bypass2Height = 22 * textScaleMultiplier
-        bypass2.Size = UDim2.new(1, -30, 0, bypass2Height)
-        
-        local box = bypass2:FindFirstChild("Box")
-        local lbl = bypass2:FindFirstChild("Label")
-        if box and lbl then
-            local boxSize = math.clamp(18 * textScaleMultiplier, 14, 24)
-            box.Size = UDim2.new(0, boxSize, 0, boxSize)
-            box.Position = UDim2.new(0, 0, 0.5, -boxSize/2)
-            lbl.Position = UDim2.new(0, boxSize + 8, 0, 0)
-            lbl.Size = UDim2.new(1, -(boxSize + 8), 1, 0)
+
+        local renderFrame = ContentFrame:FindFirstChild("RenderFrame")
+        if renderFrame then
+            renderFrame.Visible = true
+            renderFrame.Position = UDim2.new(0, startX, 0, currentY)
+            local frameHeight = 22 * textScaleMultiplier
+            renderFrame.Size = UDim2.new(1, -30, 0, frameHeight)
+            local box = renderFrame:FindFirstChild("Box")
+            local lbl = renderFrame:FindFirstChild("Label")
+            if box and lbl then
+                local boxSize = math.clamp(18 * textScaleMultiplier, 14, 24)
+                box.Size = UDim2.new(0, boxSize, 0, boxSize)
+                box.Position = UDim2.new(0, 0, 0.5, -boxSize/2)
+                lbl.Position = UDim2.new(0, boxSize + 8, 0, 0)
+                lbl.Size = UDim2.new(1, -(boxSize + 8), 1, 0)
+            end
+            currentY = currentY + frameHeight + verticalPadding
         end
-        currentY = currentY + bypass2Height + verticalPadding
-    end
-    
-    TextSizeLabel.Position = UDim2.new(0, startX, 0, currentY)
-    local textSizeHeight = 20 * textScaleMultiplier
-    TextSizeLabel.Size = UDim2.new(1, -30, 0, textSizeHeight)
-    currentY = currentY + textSizeHeight + 4
-    
-    TextSliderFrame.Position = UDim2.new(0, startX, 0, currentY)
-    TextSliderFrame.Size = UDim2.new(1, -30, 0, 6)
-    currentY = currentY + 6 + verticalPadding + 4
-    
-    if usePhysical then
-        IntervalLabel.Visible = true
-        SliderFrame.Visible = true
+
+        StatusLabel.Visible = false
+        TimerLabel.Visible = false
+        local virtF = ContentFrame:FindFirstChild("VirtualFrame")
+        if virtF then virtF.Visible = false end
+        local physF = ContentFrame:FindFirstChild("PhysicalFrame")
+        if physF then physF.Visible = false end
+        TextSizeLabel.Visible = false
+        TextSliderFrame.Visible = false
+        if IntervalLabel then IntervalLabel.Visible = false end
+        if SliderFrame then SliderFrame.Visible = false end
+        if TestBtn then TestBtn.Visible = false end
+        if ToggleBtn then ToggleBtn.Visible = false end
+    else
+        LangFrame.Visible = false
+        local potFrame = ContentFrame:FindFirstChild("PotatoFrame")
+        if potFrame then potFrame.Visible = false end
+        local renderFrame = ContentFrame:FindFirstChild("RenderFrame")
+        if renderFrame then renderFrame.Visible = false end
+
+        StatusLabel.Visible = true
+        StatusLabel.Position = UDim2.new(0, startX, 0, currentY)
+        local statusHeight = 20 * textScaleMultiplier
+        StatusLabel.Size = UDim2.new(1, -30, 0, statusHeight)
+        currentY = currentY + statusHeight + 2
+        TimerLabel.Visible = true
+        TimerLabel.Position = UDim2.new(0, startX, 0, currentY)
+        local timerHeight = 20 * textScaleMultiplier
+        TimerLabel.Size = UDim2.new(1, -30, 0, timerHeight)
+        currentY = currentY + timerHeight + verticalPadding
         
-        IntervalLabel.Position = UDim2.new(0, startX, 0, currentY)
-        local intervalHeight = 20 * textScaleMultiplier
-        IntervalLabel.Size = UDim2.new(1, -30, 0, intervalHeight)
-        currentY = currentY + intervalHeight + 4
-        
-        SliderFrame.Position = UDim2.new(0, startX, 0, currentY)
-        SliderFrame.Size = UDim2.new(1, -30, 0, 6)
+        local checkboxes = {"VirtualFrame", "PhysicalFrame"}
+        for _, name in ipairs(checkboxes) do
+            local frame = ContentFrame:FindFirstChild(name)
+            if frame then
+                frame.Visible = true
+                frame.Position = UDim2.new(0, startX, 0, currentY)
+                local frameHeight = 22 * textScaleMultiplier
+                frame.Size = UDim2.new(1, -30, 0, frameHeight)
+                local box = frame:FindFirstChild("Box")
+                local lbl = frame:FindFirstChild("Label")
+                if box and lbl then
+                    local boxSize = math.clamp(18 * textScaleMultiplier, 14, 24)
+                    box.Size = UDim2.new(0, boxSize, 0, boxSize)
+                    box.Position = UDim2.new(0, 0, 0.5, -boxSize/2)
+                    lbl.Position = UDim2.new(0, boxSize + 8, 0, 0)
+                    lbl.Size = UDim2.new(1, -(boxSize + 8), 1, 0)
+                end
+                currentY = currentY + frameHeight + verticalPadding
+            end
+        end
+        TextSizeLabel.Visible = true
+        TextSizeLabel.Position = UDim2.new(0, startX, 0, currentY)
+        local textSizeHeight = 20 * textScaleMultiplier
+        TextSizeLabel.Size = UDim2.new(1, -30, 0, textSizeHeight)
+        currentY = currentY + textSizeHeight + 4
+        TextSliderFrame.Visible = true
+        TextSliderFrame.Position = UDim2.new(0, startX, 0, currentY)
+        TextSliderFrame.Size = UDim2.new(1, -30, 0, 6)
         currentY = currentY + 6 + verticalPadding + 4
         
-        if TestBtn then
-            TestBtn.Visible = true
-            TestBtn.Position = UDim2.new(0, startX, 0, currentY)
-            local testBtnHeight = 32 * textScaleMultiplier
-            TestBtn.Size = UDim2.new(1, -30, 0, testBtnHeight)
-            currentY = currentY + testBtnHeight + verticalPadding
+        if usePhysical then
+            if IntervalLabel then
+                IntervalLabel.Visible = true
+                IntervalLabel.Position = UDim2.new(0, startX, 0, currentY)
+                local intervalHeight = 20 * textScaleMultiplier
+                IntervalLabel.Size = UDim2.new(1, -30, 0, intervalHeight)
+                currentY = currentY + intervalHeight + 4
+            end
+            if SliderFrame then
+                SliderFrame.Visible = true
+                SliderFrame.Position = UDim2.new(0, startX, 0, currentY)
+                SliderFrame.Size = UDim2.new(1, -30, 0, 6)
+                currentY = currentY + 6 + verticalPadding + 4
+            end
+            if TestBtn then
+                TestBtn.Visible = true
+                TestBtn.Position = UDim2.new(0, startX, 0, currentY)
+                local testBtnHeight = 32 * textScaleMultiplier
+                TestBtn.Size = UDim2.new(1, -30, 0, testBtnHeight)
+                currentY = currentY + testBtnHeight + verticalPadding
+            end
+        else
+            if IntervalLabel then IntervalLabel.Visible = false end
+            if SliderFrame then SliderFrame.Visible = false end
+            if TestBtn then TestBtn.Visible = false end
         end
-    else
-        IntervalLabel.Visible = false
-        SliderFrame.Visible = false
-        if TestBtn then TestBtn.Visible = false end
+        if ToggleBtn then
+            ToggleBtn.Visible = true
+            ToggleBtn.Position = UDim2.new(0, startX, 0, currentY)
+            local toggleBtnHeight = 40 * textScaleMultiplier
+            ToggleBtn.Size = UDim2.new(1, -30, 0, toggleBtnHeight)
+            currentY = currentY + toggleBtnHeight + verticalPadding
+        end
     end
     
-    if ToggleBtn then
-        ToggleBtn.Position = UDim2.new(0, startX, 0, currentY)
-        local toggleBtnHeight = 40 * textScaleMultiplier
-        ToggleBtn.Size = UDim2.new(1, -30, 0, toggleBtnHeight)
-        currentY = currentY + toggleBtnHeight + verticalPadding
-    end
+    local requiredHeight = currentY + 15
+    minHeight = requiredHeight -- Оновлюємо глобальний мінімум
     
-    minHeight = currentY + 15
-    if h < minHeight then
-        MainFrame.Size = UDim2.new(0, w, 0, minHeight)
+    -- ВИПРАВЛЕНО: Змінюємо розмір лише якщо нас попросили (forceResize) 
+    -- або якщо вікно стало меншим за дозволений мінімум.
+    if forceResize or MainFrame.Size.Y.Offset < requiredHeight then
+        isInternalResizing = true
+        MainFrame.Size = UDim2.new(0, w, 0, requiredHeight)
+        isInternalResizing = false
     end
 end
 
--- Функція динамічного масштабування шрифтів
+-- При ручному перетягуванні ми НЕ змушуємо розмір оновлюватись примусово
+MainFrame:GetPropertyChangedSignal("Size"):Connect(function()
+    if isMinimized or not isLoaded or isInternalResizing then return end
+    updateLayout(false)
+end)
+
 local function updateTextSizes()
     Title.TextSize = math.round(baseFontSizes.Title * textScaleMultiplier)
     StatusLabel.TextSize = math.round(baseFontSizes.StatusLabel * textScaleMultiplier)
     TimerLabel.TextSize = math.round(baseFontSizes.TimerLabel * textScaleMultiplier)
-    
     LblVirtual.TextSize = math.round(baseFontSizes.Checkbox * textScaleMultiplier)
     LblPhysical.TextSize = math.round(baseFontSizes.Checkbox * textScaleMultiplier)
-    
+    LblPotato.TextSize = math.round(baseFontSizes.Checkbox * textScaleMultiplier)
+    LblRender.TextSize = math.round(baseFontSizes.Checkbox * textScaleMultiplier)
     if IntervalLabel then IntervalLabel.TextSize = math.round(baseFontSizes.SliderLabel * textScaleMultiplier) end
     if TextSizeLabel then TextSizeLabel.TextSize = math.round(baseFontSizes.SliderLabel * textScaleMultiplier) end
     if TestBtn then TestBtn.TextSize = math.round(baseFontSizes.TestBtn * textScaleMultiplier) end
     if ToggleBtn then ToggleBtn.TextSize = math.round(baseFontSizes.ToggleBtn * textScaleMultiplier) end
-    
     BtnUA.TextSize = math.round(baseFontSizes.LangBtn * textScaleMultiplier)
     BtnEN.TextSize = math.round(baseFontSizes.LangBtn * textScaleMultiplier)
     BtnRU.TextSize = math.round(baseFontSizes.LangBtn * textScaleMultiplier)
-    
-    updateLayout()
+    updateLayout(true)
 end
 
--- Слайдер масштабу тексту
 TextSizeLabel = Instance.new("TextLabel")
 TextSizeLabel.Name = "TextSizeLabel"
 TextSizeLabel.Parent = ContentFrame
@@ -503,18 +662,15 @@ TextSliderFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
 TextSliderFrame.BorderSizePixel = 0
 TextSliderFrame.Position = UDim2.new(0, 15, 0, 206)
 TextSliderFrame.Size = UDim2.new(1, -30, 0, 6)
-
 TextSliderFrameCorner.CornerRadius = UDim.new(1, 0)
 TextSliderFrameCorner.Parent = TextSliderFrame
-
 TextSliderButton.Name = "TextSliderButton"
 TextSliderButton.Parent = TextSliderFrame
 TextSliderButton.BackgroundColor3 = Color3.fromRGB(240, 240, 245)
 TextSliderButton.BorderSizePixel = 0
-TextSliderButton.Position = UDim2.new(0.28, 0, -1, 0)
+TextSliderButton.Position = UDim2.new(0.28, -9, -1, 0)
 TextSliderButton.Size = UDim2.new(0, 18, 0, 18)
 TextSliderButton.Text = ""
-
 TextSliderButtonCorner.CornerRadius = UDim.new(1, 0)
 TextSliderButtonCorner.Parent = TextSliderButton
 
@@ -530,27 +686,27 @@ TextSliderButton.InputBegan:Connect(function(input)
     end
 end)
 
-UserInputService.InputEnded:Connect(function(input)
+table.insert(connections, UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         draggingTextSlider = false
     end
-end)
+end))
 
-UserInputService.InputChanged:Connect(function(input)
-    if draggingTextSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        local mousePos = input.Position.X
-        local sliderPos = TextSliderFrame.AbsolutePosition.X
-        local sliderWidth = TextSliderFrame.AbsoluteSize.X
-        local percentage = math.clamp((mousePos - sliderPos) / sliderWidth, 0, 1)
-        TextSliderButton.Position = UDim2.new(percentage, -9, -1, 0)
-        
-        textScaleMultiplier = 0.8 + (percentage * 0.7)
-        TextSizeLabel.Text = string.format(t[activeLanguage].text_size, math.round(textScaleMultiplier * 100))
-        updateTextSizes()
+table.insert(connections, UserInputService.InputChanged:Connect(function(input)
+    if draggingTextSlider and TextSliderFrame and TextSliderButton and TextSizeLabel then
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            local mousePos = input.Position.X
+            local sliderPos = TextSliderFrame.AbsolutePosition.X
+            local sliderWidth = TextSliderFrame.AbsoluteSize.X
+            local percentage = math.clamp((mousePos - sliderPos) / sliderWidth, 0, 1)
+            TextSliderButton.Position = UDim2.new(percentage, -9, -1, 0)
+            textScaleMultiplier = 0.8 + (percentage * 0.7)
+            TextSizeLabel.Text = string.format(t[activeLanguage].text_size, math.round(textScaleMultiplier * 100))
+            updateTextSizes()
+        end
     end
-end)
+end))
 
--- Слайдер інтервалу
 IntervalLabel = Instance.new("TextLabel")
 IntervalLabel.Name = "IntervalLabel"
 IntervalLabel.Parent = ContentFrame
@@ -574,18 +730,15 @@ SliderFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
 SliderFrame.BorderSizePixel = 0
 SliderFrame.Position = UDim2.new(0, 15, 0, 256)
 SliderFrame.Size = UDim2.new(1, -30, 0, 6)
-
 SliderFrameCorner.CornerRadius = UDim.new(1, 0)
 SliderFrameCorner.Parent = SliderFrame
-
 SliderButton.Name = "SliderButton"
 SliderButton.Parent = SliderFrame
 SliderButton.BackgroundColor3 = Color3.fromRGB(240, 240, 245)
 SliderButton.BorderSizePixel = 0
-SliderButton.Position = UDim2.new(0.26, 0, -1, 0)
+SliderButton.Position = UDim2.new(0.26, -9, -1, 0)
 SliderButton.Size = UDim2.new(0, 18, 0, 18)
 SliderButton.Text = ""
-
 SliderButtonCorner.CornerRadius = UDim.new(1, 0)
 SliderButtonCorner.Parent = SliderButton
 
@@ -594,10 +747,8 @@ SliderStroke.Color = Color3.fromRGB(60, 60, 65)
 SliderStroke.Thickness = 1
 SliderStroke.Parent = SliderButton
 
--- Кнопка тестового стрибка
 TestBtn = Instance.new("TextButton")
 local TestBtnCorner = Instance.new("UICorner")
-
 TestBtn.Name = "TestBtn"
 TestBtn.Parent = ContentFrame
 TestBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
@@ -608,7 +759,6 @@ TestBtn.Font = Enum.Font.GothamBold
 TestBtn.Text = t[activeLanguage].btn_test
 TestBtn.TextColor3 = Color3.fromRGB(220, 220, 225)
 TestBtn.TextSize = baseFontSizes.TestBtn
-
 TestBtnCorner.CornerRadius = UDim.new(0, 6)
 TestBtnCorner.Parent = TestBtn
 
@@ -617,10 +767,8 @@ TestStroke.Color = Color3.fromRGB(50, 50, 55)
 TestStroke.Thickness = 1
 TestStroke.Parent = TestBtn
 
--- Кнопка Запустити / Зупинити
 ToggleBtn = Instance.new("TextButton")
 local ToggleBtnCorner = Instance.new("UICorner")
-
 ToggleBtn.Name = "ToggleBtn"
 ToggleBtn.Parent = ContentFrame
 ToggleBtn.BackgroundColor3 = Color3.fromRGB(240, 240, 245)
@@ -631,11 +779,9 @@ ToggleBtn.Font = Enum.Font.GothamBold
 ToggleBtn.Text = t[activeLanguage].btn_start
 ToggleBtn.TextColor3 = Color3.fromRGB(15, 15, 17)
 ToggleBtn.TextSize = baseFontSizes.ToggleBtn
-
 ToggleBtnCorner.CornerRadius = UDim.new(0, 8)
 ToggleBtnCorner.Parent = ToggleBtn
 
--- Текст-сповіщення при згортанні
 InfoLabel = Instance.new("TextLabel")
 InfoLabel.Name = "InfoLabel"
 InfoLabel.Parent = ScreenGui
@@ -652,17 +798,14 @@ InfoLabel.Visible = false
 local InfoCorner = Instance.new("UICorner")
 InfoCorner.CornerRadius = UDim.new(0, 8)
 InfoCorner.Parent = InfoLabel
-
 local InfoStroke = Instance.new("UIStroke")
 InfoStroke.Color = Color3.fromRGB(60, 60, 65)
 InfoStroke.Thickness = 1
 InfoStroke.Parent = InfoLabel
 
--- Кнопка відновлення
 RestoreBtn = Instance.new("TextButton")
 local RestoreBtnCorner = Instance.new("UICorner")
 local RestoreBtnStroke = Instance.new("UIStroke")
-
 RestoreBtn.Name = "RestoreBtn"
 RestoreBtn.Parent = ScreenGui
 RestoreBtn.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
@@ -675,10 +818,8 @@ RestoreBtn.TextColor3 = Color3.fromRGB(240, 240, 245)
 RestoreBtn.TextSize = 16
 RestoreBtn.Visible = false
 RestoreBtn.Active = true
-
 RestoreBtnCorner.CornerRadius = UDim.new(0, 8)
 RestoreBtnCorner.Parent = RestoreBtn
-
 RestoreBtnStroke.Color = Color3.fromRGB(60, 60, 65)
 RestoreBtnStroke.Thickness = 1
 RestoreBtnStroke.Parent = RestoreBtn
@@ -696,14 +837,16 @@ RestoreBtn.InputBegan:Connect(function(input)
     end
 end)
 
-UserInputService.InputChanged:Connect(function(input)
-    if isDraggingRestore and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        local delta = input.Position - dragStartPos
-        RestoreBtn.Position = UDim2.new(startUIPos.X.Scale, startUIPos.X.Offset + delta.X, startUIPos.Y.Scale, startUIPos.Y.Offset + delta.Y)
+table.insert(connections, UserInputService.InputChanged:Connect(function(input)
+    if isDraggingRestore and RestoreBtn then
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            local delta = input.Position - dragStartPos
+            RestoreBtn.Position = UDim2.new(startUIPos.X.Scale, startUIPos.X.Offset + delta.X, startUIPos.Y.Scale, startUIPos.Y.Offset + delta.Y)
+        end
     end
-end)
+end))
 
-UserInputService.InputEnded:Connect(function(input)
+table.insert(connections, UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         if isDraggingRestore then
             isDraggingRestore = false
@@ -715,9 +858,8 @@ UserInputService.InputEnded:Connect(function(input)
             end
         end
     end
-end)
+end))
 
--- Завантажувальний екран
 LoadingFrame = Instance.new("Frame")
 LoadingFrame.Name = "LoadingFrame"
 LoadingFrame.Parent = MainFrame
@@ -801,7 +943,6 @@ PercentLabel.TextColor3 = Color3.fromRGB(240, 240, 245)
 PercentLabel.TextSize = 12
 PercentLabel.ZIndex = 21
 
--- Зміна розміру вікна
 ResizeBtn = Instance.new("TextButton")
 ResizeBtn.Name = "ResizeBtn"
 ResizeBtn.Parent = MainFrame
@@ -825,7 +966,6 @@ local function createLine(sizeX, posX, posY)
     line.Size = UDim2.new(0, sizeX, 0, 1.5)
     line.Position = UDim2.new(0, posX, 0, posY)
     line.Parent = ResizeVisual
-    
     ResizeBtn.MouseEnter:Connect(function()
         TweenService:Create(line, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(240, 240, 245)}):Play()
     end)
@@ -846,89 +986,65 @@ ResizeBtn.InputBegan:Connect(function(input)
     end
 end)
 
-UserInputService.InputEnded:Connect(function(input)
+table.insert(connections, UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         resizing = false
     end
-end)
+end))
 
-UserInputService.InputChanged:Connect(function(input)
-    if resizing and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        local mousePos = UserInputService:GetMouseLocation()
-        local newWidth = mousePos.X - MainFrame.AbsolutePosition.X
-        local newHeight = (mousePos.Y - 36) - MainFrame.AbsolutePosition.Y
-        
-        newWidth = math.clamp(newWidth, minWidth, maxWidth)
-        newHeight = math.clamp(newHeight, minHeight, maxHeight)
-        
-        MainFrame.Size = UDim2.new(0, newWidth, 0, newHeight)
+table.insert(connections, UserInputService.InputChanged:Connect(function(input)
+    if resizing and MainFrame then
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            local mousePos = UserInputService:GetMouseLocation()
+            local newWidth = mousePos.X - MainFrame.AbsolutePosition.X
+            local newHeight = (mousePos.Y - 36) - MainFrame.AbsolutePosition.Y
+            newWidth = math.clamp(newWidth, minWidth, maxWidth)
+            newHeight = math.clamp(newHeight, minHeight, maxHeight)
+            MainFrame.Size = UDim2.new(0, newWidth, 0, newHeight)
+        end
     end
-end)
+end))
 
-MainFrame:GetPropertyChangedSignal("Size"):Connect(function()
-    if isMinimized or not isLoaded then return end
-    updateLayout()
-end)
-
--- Анімація кнопок (Hover)
 local function applyHoverAnimation(button, activeColor, hoverColor)
     button.MouseEnter:Connect(function()
-        TweenService:Create(button, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-            BackgroundColor3 = hoverColor
-        }):Play()
+        TweenService:Create(button, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundColor3 = hoverColor}):Play()
     end)
     button.MouseLeave:Connect(function()
-        TweenService:Create(button, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-            BackgroundColor3 = activeColor
-        }):Play()
+        TweenService:Create(button, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundColor3 = activeColor}):Play()
     end)
 end
 
 applyHoverAnimation(TestBtn, Color3.fromRGB(25, 25, 28), Color3.fromRGB(35, 35, 40))
 applyHoverAnimation(RestoreBtn, Color3.fromRGB(15, 15, 17), Color3.fromRGB(25, 25, 28))
 
--- Динамічний Hover для Toggle-кнопки
 ToggleBtn.MouseEnter:Connect(function()
     local targetColor = isRunning and Color3.fromRGB(170, 40, 40) or Color3.fromRGB(255, 255, 255)
-    TweenService:Create(ToggleBtn, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-        BackgroundColor3 = targetColor
-    }):Play()
+    TweenService:Create(ToggleBtn, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundColor3 = targetColor}):Play()
 end)
 
 ToggleBtn.MouseLeave:Connect(function()
     local targetColor = isRunning and Color3.fromRGB(135, 30, 30) or Color3.fromRGB(240, 240, 245)
-    TweenService:Create(ToggleBtn, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-        BackgroundColor3 = targetColor
-    }):Play()
+    TweenService:Create(ToggleBtn, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundColor3 = targetColor}):Play()
 end)
 
--- Функція запуску
-local savedWidth, savedHeight = 270, 380
+local savedWidth, savedHeight = 270, 345 -- ВИПРАВЛЕНО: Змінено початкову висоту на 345, щоб ідеально збігалося
 
 local function triggerLaunchSequence()
     MainFrame.Size = UDim2.new(0, 0, 0, 0)
     MainFrame.Visible = true
-    
-    local popInTween = TweenService:Create(MainFrame, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-        Size = UDim2.new(0, savedWidth, 0, savedHeight)
-    })
+    local popInTween = TweenService:Create(MainFrame, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(0, savedWidth, 0, savedHeight)})
     popInTween:Play()
     popInTween.Completed:Wait()
-
     local stages = {
         {percent = 0.30, label = "load_1"},
         {percent = 0.60, label = "load_2"},
         {percent = 0.85, label = "load_3"},
         {percent = 1.00, label = "load_4"},
     }
-
     for _, stage in ipairs(stages) do
         LoadStatus.Text = t[activeLanguage][stage.label]
-        local tweenProgress = TweenService:Create(ProgressBar, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-            Size = UDim2.new(stage.percent, 0, 1, 0)
-        })
+        local tweenProgress = TweenService:Create(ProgressBar, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(stage.percent, 0, 1, 0)})
         tweenProgress:Play()
-        
         local startP = tonumber(string.match(PercentLabel.Text, "%d+")) or 0
         local endP = math.round(stage.percent * 100)
         task.spawn(function()
@@ -937,41 +1053,33 @@ local function triggerLaunchSequence()
                 task.wait(0.008)
             end
         end)
-        
         task.wait(0.7)
     end
-
     local fadeOut = TweenService:Create(LoadingFrame, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1})
     local fadeLogo = TweenService:Create(LogoLabel, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextTransparency = 1})
     local fadeStatus = TweenService:Create(LoadStatus, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextTransparency = 1})
     local fadeBarBG = TweenService:Create(ProgressBarBackground, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1})
     local fadeBar = TweenService:Create(ProgressBar, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1})
     local fadePercent = TweenService:Create(PercentLabel, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextTransparency = 1})
-
     fadeOut:Play()
     fadeLogo:Play()
     fadeStatus:Play()
     fadeBarBG:Play()
     fadeBar:Play()
     fadePercent:Play()
-    
     fadeOut.Completed:Wait()
     LoadingFrame.Visible = false
-    
     isLoaded = true 
-    updateLayout()
+    updateLayout(true) -- Запускаємо оновлення з точним розміром
 end
 
--- Оновлення локалізації та візуалу
 local function updateLanguage(lang)
     activeLanguage = lang
     Title.Text = t[lang].title
     IntervalLabel.Text = formatIntervalText(jumpInterval, lang)
     TextSizeLabel.Text = string.format(t[lang].text_size, math.round(textScaleMultiplier * 100))
-    
     local elapsed = isRunning and (tick() - startTime) or 0
     TimerLabel.Text = t[lang].timer .. formatTime(elapsed)
-    
     if isRunning then
         ToggleBtn.Text = t[lang].btn_stop
         ToggleBtn.BackgroundColor3 = Color3.fromRGB(135, 30, 30)
@@ -985,25 +1093,24 @@ local function updateLanguage(lang)
         StatusLabel.Text = t[lang].status_off
         StatusLabel.TextColor3 = Color3.fromRGB(180, 50, 50)
     end
-    
     TestBtn.Text = t[lang].btn_test
     LblVirtual.Text = t[lang].cb_virtual
     LblPhysical.Text = t[lang].cb_physical
+    LblPotato.Text = t[lang].cb_potato
+    LblRender.Text = t[lang].cb_render
     InfoLabel.Text = t[lang].notif_minimized
-
     for _, btn in ipairs({BtnUA, BtnEN, BtnRU}) do
         local isSelected = (btn.Text == lang)
         btn.BackgroundColor3 = isSelected and Color3.fromRGB(240, 240, 245) or Color3.fromRGB(25, 25, 28)
         btn.TextColor3 = isSelected and Color3.fromRGB(15, 15, 17) or Color3.fromRGB(180, 180, 185)
     end
-    updateLayout()
+    updateLayout(true)
 end
 
 BtnUA.Activated:Connect(function() updateLanguage("UA") end)
 BtnEN.Activated:Connect(function() updateLanguage("EN") end)
 BtnRU.Activated:Connect(function() updateLanguage("RU") end)
 
--- Перемикання чекбоксів
 local function toggleCheckbox(typeBypass)
     if typeBypass == "Virtual" then
         useVirtual = not useVirtual
@@ -1013,33 +1120,40 @@ local function toggleCheckbox(typeBypass)
         usePhysical = not usePhysical
         BoxPhysical.BackgroundColor3 = usePhysical and Color3.fromRGB(240, 240, 245) or Color3.fromRGB(25, 25, 28)
         BoxPhysical.Text = usePhysical and "✓" or ""
-        updateLayout()
+        updateLayout(true)
+    elseif typeBypass == "Potato" then
+        usePotato = not usePotato
+        BoxPotato.BackgroundColor3 = usePotato and Color3.fromRGB(240, 240, 245) or Color3.fromRGB(25, 25, 28)
+        BoxPotato.Text = usePotato and "✓" or ""
+        applyPotatoMode(usePotato)
+    elseif typeBypass == "Render" then
+        disable3DRender = not disable3DRender
+        BoxRender.BackgroundColor3 = disable3DRender and Color3.fromRGB(240, 240, 245) or Color3.fromRGB(25, 25, 28)
+        BoxRender.Text = disable3DRender and "✓" or ""
+        apply3DRender(disable3DRender)
     end
 end
 
 BoxVirtual.Activated:Connect(function() toggleCheckbox("Virtual") end)
 BoxPhysical.Activated:Connect(function() toggleCheckbox("Physical") end)
+BoxPotato.Activated:Connect(function() toggleCheckbox("Potato") end)
+BoxRender.Activated:Connect(function() toggleCheckbox("Render") end)
 
--- Обхід AFK через Idled
-Players.LocalPlayer.Idled:Connect(function()
+table.insert(connections, Players.LocalPlayer.Idled:Connect(function()
     if isRunning and useVirtual then
         VirtualUser:CaptureController()
         VirtualUser:ClickButton2(Vector2.new(0, 0))
     end
-end)
+end))
 
--- Симуляція стрибка
 local function makeJump()
     VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
     task.wait(0.1)
     VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
 end
 
-TestBtn.Activated:Connect(function()
-    makeJump()
-end)
+TestBtn.Activated:Connect(function() makeJump() end)
 
--- Слайдер інтервалу
 local dragging = false
 SliderButton.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -1047,40 +1161,35 @@ SliderButton.InputBegan:Connect(function(input)
     end
 end)
 
-UserInputService.InputEnded:Connect(function(input)
+table.insert(connections, UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         dragging = false
     end
-end)
+end))
 
-UserInputService.InputChanged:Connect(function(input)
-    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        local mousePos = input.Position.X
-        local sliderPos = SliderFrame.AbsolutePosition.X
-        local sliderWidth = SliderFrame.AbsoluteSize.X
-        local percentage = math.clamp((mousePos - sliderPos) / sliderWidth, 0, 1)
-        SliderButton.Position = UDim2.new(percentage, -9, -1, 0)
-        
-        jumpInterval = math.round(5 + (percentage * 1135))
-        IntervalLabel.Text = formatIntervalText(jumpInterval, activeLanguage)
+table.insert(connections, UserInputService.InputChanged:Connect(function(input)
+    if dragging and SliderFrame and SliderButton and IntervalLabel then
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            local mousePos = input.Position.X
+            local sliderPos = SliderFrame.AbsolutePosition.X
+            local sliderWidth = SliderFrame.AbsoluteSize.X
+            local percentage = math.clamp((mousePos - sliderPos) / sliderWidth, 0, 1)
+            SliderButton.Position = UDim2.new(percentage, -9, -1, 0)
+            jumpInterval = math.round(5 + (percentage * 1135))
+            IntervalLabel.Text = formatIntervalText(jumpInterval, activeLanguage)
+        end
     end
-end)
+end))
 
--- Основний цикл роботи (Heartbeat)
 local heartbeatConnection
 heartbeatConnection = RunService.Heartbeat:Connect(function()
     if not ScreenGui or not ScreenGui.Parent then
-        if heartbeatConnection then
-            heartbeatConnection:Disconnect()
-            heartbeatConnection = nil
-        end
+        if heartbeatConnection then heartbeatConnection:Disconnect() heartbeatConnection = nil end
         return
     end
-
     if isRunning then
         local currentTime = tick()
         TimerLabel.Text = t[activeLanguage].timer .. formatTime(currentTime - startTime)
-        
         if usePhysical and (currentTime - lastJumpTime >= jumpInterval) then
             makeJump()
             lastJumpTime = currentTime
@@ -1088,97 +1197,74 @@ heartbeatConnection = RunService.Heartbeat:Connect(function()
     end
 end)
 
--- Логіка тригеру та кольору кнопки запуску
 ToggleBtn.Activated:Connect(function()
     isRunning = not isRunning
-    
     if isRunning then
         ToggleBtn.Text = t[activeLanguage].btn_stop
-        TweenService:Create(ToggleBtn, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-            BackgroundColor3 = Color3.fromRGB(135, 30, 30),
-            TextColor3 = Color3.fromRGB(255, 255, 255)
-        }):Play()
-        
+        TweenService:Create(ToggleBtn, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundColor3 = Color3.fromRGB(135, 30, 30), TextColor3 = Color3.fromRGB(255, 255, 255)}):Play()
         StatusLabel.Text = t[activeLanguage].status_on
         StatusLabel.TextColor3 = Color3.fromRGB(50, 180, 50)
         startTime = tick()
         lastJumpTime = tick()
     else
         ToggleBtn.Text = t[activeLanguage].btn_start
-        TweenService:Create(ToggleBtn, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-            BackgroundColor3 = Color3.fromRGB(240, 240, 245),
-            TextColor3 = Color3.fromRGB(15, 15, 17)
-        }):Play()
-        
+        TweenService:Create(ToggleBtn, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundColor3 = Color3.fromRGB(240, 240, 245), TextColor3 = Color3.fromRGB(15, 15, 17)}):Play()
         StatusLabel.Text = t[activeLanguage].status_off
         StatusLabel.TextColor3 = Color3.fromRGB(180, 50, 50)
     end
-    updateLayout()
+    updateLayout(false)
 end)
 
--- Логіка згортання (Minimize)
 setMinimized = function(state)
     isMinimized = state
-    
     if state then
         savedWidth = MainFrame.Size.X.Offset
         savedHeight = MainFrame.Size.Y.Offset
-        
-        local minimizeTween = TweenService:Create(MainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-            Size = UDim2.new(0, savedWidth, 0, 0)
-        })
+        local minimizeTween = TweenService:Create(MainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Size = UDim2.new(0, savedWidth, 0, 0)})
         minimizeTween:Play()
         minimizeTween.Completed:Wait()
-        if isMinimized then
-            MainFrame.Visible = false
-        end
-        
+        if isMinimized then MainFrame.Visible = false end
         InfoLabel.Visible = true
         RestoreBtn.Visible = true
         task.delay(4, function()
-            if isMinimized then
-                InfoLabel.Visible = false
-            end
+            if isMinimized and InfoLabel then InfoLabel.Visible = false end
         end)
     else
         MainFrame.Visible = true
-        local restoreTween = TweenService:Create(MainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-            Size = UDim2.new(0, savedWidth, 0, savedHeight)
-        })
+        local restoreTween = TweenService:Create(MainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(0, savedWidth, 0, savedHeight)})
         restoreTween:Play()
         InfoLabel.Visible = false
         RestoreBtn.Visible = false
     end
 end
 
-MinimizeBtn.Activated:Connect(function()
-    setMinimized(true)
-end)
+MinimizeBtn.Activated:Connect(function() setMinimized(true) end)
 
--- Кнопка повного закриття
 CloseBtn.Activated:Connect(function()
     isRunning = false
     isLoaded = false
-    if heartbeatConnection then
-        heartbeatConnection:Disconnect()
-        heartbeatConnection = nil
+    applyPotatoMode(false)
+    apply3DRender(false) 
+    
+    if heartbeatConnection then heartbeatConnection:Disconnect() heartbeatConnection = nil end
+    
+    for _, conn in ipairs(connections) do
+        if conn.Connected then conn:Disconnect() end
     end
-    local closeTween = TweenService:Create(MainFrame, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-        Size = UDim2.new(0, 0, 0, 0)
-    })
+    table.clear(connections)
+
+    local closeTween = TweenService:Create(MainFrame, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Size = UDim2.new(0, 0, 0, 0)})
     closeTween:Play()
     closeTween.Completed:Wait()
     ScreenGui:Destroy()
 end)
 
--- Згортання/розгортання на Ctrl + S
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
+table.insert(connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if not gameProcessed then
         if input.KeyCode == Enum.KeyCode.S and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
             setMinimized(not isMinimized)
         end
     end
-end)
+end))
 
--- Запуск ініціалізації
 task.spawn(triggerLaunchSequence)
