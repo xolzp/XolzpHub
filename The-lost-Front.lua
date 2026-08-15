@@ -26,7 +26,7 @@ local Config = {
     RADAR_Enabled = true,
     RADAR_Size = 120,
     
-    AIM_Enabled = true,
+    AIM_Enabled = false,
     AIM_FOV = 150,
     AIM_Smooth = 15,
     AIM_ShowFOV = true,
@@ -614,56 +614,70 @@ local MenuItems = {
 
 local GUI = {
     Frame = nil, Position = nil, Dragging = false, DragOffset = Vector2.zero,
-    Items = {}, TabButtons = {}, ContentFrame = nil,
+    Items = {}, TabButtons = {}, ContentFrame = nil, MinPopup = nil,
     TweenInfo = TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 }
+
+local Unload -- forward declaration
 
 function GUI.ShowLoadingScreen(callback)
     local loadBG = Instance.new("Frame")
     loadBG.Name = "LoadingScreen"
-    loadBG.Size = UDim2.new(1, 0, 1, 0)
-    loadBG.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
+    -- Точний розмір головного меню
+    loadBG.Size = UDim2.new(0, 340, 0, 420)
+    -- Початкова позиція за екраном (для анімації)
+    loadBG.Position = UDim2.new(0, -400, 0.5, -210)
+    loadBG.BackgroundColor3 = Palette.MenuBg
+    loadBG.BackgroundTransparency = 0.02
     loadBG.BorderSizePixel = 0
     loadBG.ZIndex = 100
     loadBG.Parent = UI.ScreenGui
     
+    -- Дизайн вікна (рамка і закруглені кути)
+    Instance.new("UICorner", loadBG).CornerRadius = UDim.new(0, 6)
+    local loadStroke = Instance.new("UIStroke")
+    loadStroke.Color = Palette.MenuBorder
+    loadStroke.Thickness = 1
+    loadStroke.Transparency = 0.5
+    loadStroke.Parent = loadBG
+    
     local centerContainer = Instance.new("Frame")
-    centerContainer.Size = UDim2.new(0, 400, 0, 300)
-    centerContainer.Position = UDim2.new(0.5, -200, 0.5, -150)
+    centerContainer.Size = UDim2.new(1, 0, 1, 0)
+    centerContainer.Position = UDim2.new(0, 0, 0, 0)
     centerContainer.BackgroundTransparency = 1
     centerContainer.Parent = loadBG
     
     local titleText = Instance.new("TextLabel")
     titleText.BackgroundTransparency = 1
     titleText.Size = UDim2.new(1, 0, 0, 50)
-    titleText.Position = UDim2.new(0, 0, 0.15, 0)
-    titleText.Font = Enum.Font.Gotham
-    titleText.TextSize = 28
-    titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    titleText.Position = UDim2.new(0, 0, 0.35, 0)
+    titleText.Font = Enum.Font.GothamBold
+    titleText.TextSize = 24
+    titleText.TextColor3 = Palette.MenuAccent
     titleText.Text = "XOLZP HUB"
     titleText.Parent = centerContainer
     
     local statusText = Instance.new("TextLabel")
     statusText.BackgroundTransparency = 1
     statusText.Size = UDim2.new(1, 0, 0, 20)
-    statusText.Position = UDim2.new(0, 0, 0.45, 0)
+    statusText.Position = UDim2.new(0, 0, 0.52, 0)
     statusText.Font = Enum.Font.Gotham
     statusText.TextSize = 12
-    statusText.TextColor3 = Color3.fromRGB(150, 150, 150)
+    statusText.TextColor3 = Palette.MenuTextDim
     statusText.Text = "Preparing AFK bypass..."
     statusText.Parent = centerContainer
     
     local barTrack = Instance.new("Frame")
-    barTrack.Size = UDim2.new(0, 300, 0, 6)
-    barTrack.Position = UDim2.new(0.5, -150, 0.65, 0)
-    barTrack.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    barTrack.Size = UDim2.new(0, 260, 0, 6)
+    barTrack.Position = UDim2.new(0.5, -130, 0.65, 0)
+    barTrack.BackgroundColor3 = Palette.MenuOff
     barTrack.BorderSizePixel = 0
     barTrack.Parent = centerContainer
     Instance.new("UICorner", barTrack).CornerRadius = UDim.new(1, 0)
     
     local barFill = Instance.new("Frame")
     barFill.Size = UDim2.new(0, 0, 1, 0)
-    barFill.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    barFill.BackgroundColor3 = Palette.MenuAccent
     barFill.BorderSizePixel = 0
     barFill.Parent = barTrack
     Instance.new("UICorner", barFill).CornerRadius = UDim.new(1, 0)
@@ -671,12 +685,15 @@ function GUI.ShowLoadingScreen(callback)
     local percentText = Instance.new("TextLabel")
     percentText.BackgroundTransparency = 1
     percentText.Size = UDim2.new(1, 0, 0, 20)
-    percentText.Position = UDim2.new(0, 0, 0.75, 0)
+    percentText.Position = UDim2.new(0, 0, 0.72, 0)
     percentText.Font = Enum.Font.GothamBold
     percentText.TextSize = 14
-    percentText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    percentText.TextColor3 = Palette.MenuAccent
     percentText.Text = "0%"
     percentText.Parent = centerContainer
+
+    -- Анімація виїзду екрану завантаження на екран
+    TweenService:Create(loadBG, TweenInfo.new(0.6, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Position = UDim2.new(0, 30, 0.5, -210)}):Play()
 
     task.spawn(function()
         local texts = {"Loading assets...", "Bypassing anti-cheat...", "Preparing AFK bypass...", "Injecting XolzpHub..."}
@@ -694,12 +711,14 @@ function GUI.ShowLoadingScreen(callback)
         end
         task.wait(0.4)
         
-        local fadeTween = TweenService:Create(loadBG, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1})
-        TweenService:Create(titleText, TweenInfo.new(0.5), {TextTransparency = 1}):Play()
-        TweenService:Create(statusText, TweenInfo.new(0.5), {TextTransparency = 1}):Play()
-        TweenService:Create(barTrack, TweenInfo.new(0.5), {BackgroundTransparency = 1}):Play()
-        TweenService:Create(barFill, TweenInfo.new(0.5), {BackgroundTransparency = 1}):Play()
-        TweenService:Create(percentText, TweenInfo.new(0.5), {TextTransparency = 1}):Play()
+        -- Анімація зникнення
+        local fadeTween = TweenService:Create(loadBG, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1})
+        TweenService:Create(loadStroke, TweenInfo.new(0.3), {Transparency = 1}):Play()
+        TweenService:Create(titleText, TweenInfo.new(0.3), {TextTransparency = 1}):Play()
+        TweenService:Create(statusText, TweenInfo.new(0.3), {TextTransparency = 1}):Play()
+        TweenService:Create(barTrack, TweenInfo.new(0.3), {BackgroundTransparency = 1}):Play()
+        TweenService:Create(barFill, TweenInfo.new(0.3), {BackgroundTransparency = 1}):Play()
+        TweenService:Create(percentText, TweenInfo.new(0.3), {TextTransparency = 1}):Play()
         fadeTween:Play()
         fadeTween.Completed:Wait()
         loadBG:Destroy()
@@ -718,16 +737,17 @@ function GUI.Create()
     main.BackgroundTransparency = 0.02
     main.BorderSizePixel = 0
     main.Size = UDim2.new(0, menuW, 0, menuH)
-    main.Position = UDim2.new(0, -500, 0.5, -menuH/2)
+    main.Position = UDim2.new(0, 30, 0.5, -menuH/2) -- Починає відразу на потрібній позиції, бо екран завантаження був там же
     main.Active = true
     main.Parent = UI.ScreenGui
+    main.BackgroundTransparency = 1 -- Початково прозорий для анімації появи
     GUI.Frame = main
     Instance.new("UICorner", main).CornerRadius = UDim.new(0, 6)
     
     local stroke = Instance.new("UIStroke")
     stroke.Color = Palette.MenuBorder
     stroke.Thickness = 1
-    stroke.Transparency = 0.5
+    stroke.Transparency = 1 -- Початково прозора
     stroke.Parent = main
     
     local title = Instance.new("Frame")
@@ -757,6 +777,93 @@ function GUI.Create()
     subTitleText.TextXAlignment = Enum.TextXAlignment.Left
     subTitleText.Text = "the lost front for xeno"
     subTitleText.Parent = title
+
+    -- [ КНОПКИ У ВЕРХНЬОМУ ПРАВОМУ КУТІ ] --
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Name = "CloseButton"
+    closeBtn.BackgroundTransparency = 1
+    closeBtn.Position = UDim2.new(1, -30, 0, 10)
+    closeBtn.Size = UDim2.new(0, 20, 0, 20)
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.TextSize = 14
+    closeBtn.TextColor3 = Color3.fromRGB(255, 50, 50)
+    closeBtn.Text = "X"
+    closeBtn.Parent = title
+    
+    -- Анімація повного закриття
+    closeBtn.MouseButton1Click:Connect(function()
+        if main then
+            local slideOut = TweenService:Create(main, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.In), {Position = UDim2.new(0, -400, 0.5, -menuH/2)})
+            slideOut:Play()
+            slideOut.Completed:Wait()
+        end
+        if Unload then Unload() end
+    end)
+    
+    local minBtn = Instance.new("TextButton")
+    minBtn.Name = "MinimizeButton"
+    minBtn.BackgroundTransparency = 1
+    minBtn.Position = UDim2.new(1, -60, 0, 10)
+    minBtn.Size = UDim2.new(0, 20, 0, 20)
+    minBtn.Font = Enum.Font.GothamBold
+    minBtn.TextSize = 16
+    minBtn.TextColor3 = Palette.MenuAccent
+    minBtn.Text = "-"
+    minBtn.Parent = title
+    
+    local minPopup = Instance.new("Frame")
+    minPopup.Name = "MinimizedPopup"
+    minPopup.BackgroundColor3 = Palette.MenuBg
+    minPopup.BorderSizePixel = 0
+    minPopup.Size = UDim2.new(0, 220, 0, 40)
+    minPopup.Position = UDim2.new(0, -250, 0.5, -20)
+    minPopup.Visible = false
+    minPopup.Parent = UI.ScreenGui
+    Instance.new("UICorner", minPopup).CornerRadius = UDim.new(0, 6)
+    
+    local minPopupStroke = Instance.new("UIStroke")
+    minPopupStroke.Color = Palette.MenuBorder
+    minPopupStroke.Thickness = 1
+    minPopupStroke.Transparency = 0.5
+    minPopupStroke.Parent = minPopup
+
+    local minPopupText = Instance.new("TextLabel")
+    minPopupText.BackgroundTransparency = 1
+    minPopupText.Size = UDim2.new(1, 0, 1, 0)
+    minPopupText.Font = Enum.Font.GothamBold
+    minPopupText.TextSize = 12
+    minPopupText.TextColor3 = Palette.MenuAccent
+    minPopupText.Text = "Press Ctrl + S to maximize"
+    minPopupText.Parent = minPopup
+    
+    GUI.MinPopup = minPopup
+    
+    -- Анімація згортання (Minimize)
+    minBtn.MouseButton1Click:Connect(function()
+        Config.MENU_Open = false
+        local tweenOut = TweenService:Create(main, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.In), {Position = UDim2.new(0, -400, 0.5, -menuH/2)})
+        tweenOut:Play()
+        
+        task.spawn(function()
+            tweenOut.Completed:Wait()
+            main.Visible = false
+            minPopup.Position = UDim2.new(0, -250, 0.5, -20) -- починає з-за екрану
+            minPopup.Visible = true
+            TweenService:Create(minPopup, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Position = UDim2.new(0, 30, 0.5, -20)}):Play()
+            
+            -- ЗАТРИМКА 5 СЕКУНД ТА АНІМАЦІЯ ЗНИКНЕННЯ ПОВІДОМЛЕННЯ
+            task.wait(5)
+            if not Config.MENU_Open and minPopup.Visible then
+                local hideTween = TweenService:Create(minPopup, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.In), {Position = UDim2.new(0, -250, 0.5, -20)})
+                hideTween:Play()
+                hideTween.Completed:Wait()
+                if not Config.MENU_Open then
+                    minPopup.Visible = false
+                end
+            end
+        end)
+    end)
+    -- [ КІНЕЦЬ КНОПОК ] --
     
     local tabFrame = Instance.new("Frame")
     tabFrame.Name = "Tabs"
@@ -828,7 +935,10 @@ function GUI.Create()
     GUI.UpdateContent(true)
     
     Config.MENU_Open = true
-    TweenService:Create(main, TweenInfo.new(0.6, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Position = UDim2.new(0, 30, 0.5, -menuH/2)}):Play()
+    
+    -- Плавно проявляємо меню там, де тільки що пропав екран завантаження
+    TweenService:Create(main, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 0.02}):Play()
+    TweenService:Create(stroke, TweenInfo.new(0.3), {Transparency = 0.5}):Play()
 end
 
 function GUI.UpdateTabs()
@@ -942,7 +1052,7 @@ function GUI.Step()
     end
 end
 
-local function Unload()
+function Unload()
     if Unloaded then return end
     Unloaded = true; Config.DESYNC_Enabled = false; Config.TRIGGER_Enabled = false
     if AIM.FOVCircle then pcall(function() AIM.FOVCircle:Remove() end) end
@@ -958,6 +1068,28 @@ Connections.input = UserInputService.InputBegan:Connect(function(input, gp)
         Config.MENU_Open = not Config.MENU_Open
         if GUI.Frame then
             TweenService:Create(GUI.Frame, TweenInfo.new(0.4, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Position = Config.MENU_Open and UDim2.new(0, 30, 0.5, -210) or UDim2.new(0, -400, 0.5, -210)}):Play()
+        end
+    end
+    
+    -- [ ХОТКЕЙ CTRL + S ДЛЯ РОЗГОРТАННЯ ВІКНА З АНІМАЦІЄЮ ] --
+    if input.KeyCode == Enum.KeyCode.S and not gp then
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl) then
+            -- ЗМІНА: Перевіряємо, чи меню закрите, щоб можна було відкрити навіть коли повідомлення вже сховалося
+            if not Config.MENU_Open then
+                if GUI.MinPopup and GUI.MinPopup.Visible then
+                    local popupTween = TweenService:Create(GUI.MinPopup, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.In), {Position = UDim2.new(0, -250, 0.5, -20)})
+                    popupTween:Play()
+                    popupTween.Completed:Wait()
+                    GUI.MinPopup.Visible = false
+                end
+                
+                if GUI.Frame then
+                    GUI.Frame.Visible = true
+                    Config.MENU_Open = true
+                    GUI.Frame.Position = UDim2.new(0, -400, 0.5, -210) -- починає зліва за екраном
+                    TweenService:Create(GUI.Frame, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Position = UDim2.new(0, 30, 0.5, -210)}):Play()
+                end
+            end
         end
     end
 end)
