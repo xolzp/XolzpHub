@@ -1006,9 +1006,11 @@ function GUI.UpdateContent(isInitial)
                 local fill = Instance.new("Frame"); fill.BackgroundColor3 = Palette.MenuAccent; fill.BorderSizePixel = 0; fill.Size = UDim2.new(pct, 0, 1, 0); fill.Parent = track
                 Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
                 
+                if Connections["slider_" .. menuItem.key] then Connections["slider_" .. menuItem.key]:Disconnect() end
+                
                 local dragging = false
                 track.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = true end end)
-                track.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end end)
+                UserInputService.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end end)
                 
                 Connections["slider_" .. menuItem.key] = RunService.RenderStepped:Connect(function()
                     if dragging then
@@ -1057,6 +1059,7 @@ function Unload()
     Unloaded = true; Config.DESYNC_Enabled = false; Config.TRIGGER_Enabled = false
     if AIM.FOVCircle then pcall(function() AIM.FOVCircle:Remove() end) end
     for _, c in pairs(Connections) do pcall(function() c:Disconnect() end) end
+    RunService:UnbindFromRenderStep("XolzpHub_Render")
     for _, esp in pairs(ESP.cache) do ESP.Destroy(esp) end
     for _, esp in pairs(FPV.cache) do FPV.Destroy(esp) end
     pcall(function() UI.ScreenGui:Destroy() end)
@@ -1098,7 +1101,7 @@ Connections.inputUp = UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 then GUI.Dragging = false end
 end)
 
-Connections.render = RunService.RenderStepped:Connect(function()
+RunService:BindToRenderStep("XolzpHub_Render", Enum.RenderPriority.Camera.Value + 1, function()
     if Unloaded then return end
     local cam = Workspace.CurrentCamera; if not cam then return end
     local screenSize = cam.ViewportSize; local screenCenter = Vector2.new(screenSize.X/2, screenSize.Y/2)
